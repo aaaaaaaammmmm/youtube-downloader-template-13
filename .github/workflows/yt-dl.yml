@@ -503,7 +503,7 @@ jobs:
       # 🆕 NEW STEP 1: Upload parts to Bale channel (Archive)
       # ═══════════════════════════════════════════════════════════════════
       - name: "📤 Upload parts to Bale channel (Archive)"
-        if: ${{ env.CHANNEL_ID != '' && secrets.BALE_BOT_TOKEN != '' }}
+        if: env.CHANNEL_ID != ''
         env:
           BALE_TOKEN: ${{ secrets.BALE_BOT_TOKEN }}
           CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
@@ -577,7 +577,7 @@ jobs:
       # 🆕 NEW STEP 2: Prepare Bale inline buttons (to be sent via gateway.php)
       # ═══════════════════════════════════════════════════════════════════
       - name: "🔗 Prepare Bale inline buttons"
-        if: ${{ env.CHANNEL_ID != '' && secrets.BALE_BOT_TOKEN != '' }}
+        if: env.CHANNEL_ID != ''
         run: |
           #!/bin/bash
           BACKUP_DIR="${{ env.BACKUP_DIR }}"
