@@ -483,8 +483,8 @@ jobs:
         run: |
           docker stop warp 2>/dev/null || true
           docker rm warp 2>/dev/null || true
-          
-      # ── Step 8.5: Delete files older than 5 minutes ──────────────────  ⬅️ اینجا اضافه کن
+
+      # ── Step 8.5: Delete files older than 5 minutes ───
       - name: "🗑️ Delete old video files (older than 5 minutes)"
         if: always()
         run: |
@@ -498,7 +498,146 @@ jobs:
               done
             fi
           fi
+
+      # ═══════════════════════════════════════════════════════════════════
+      # 🆕 NEW STEP 1: Upload parts to Bale channel (Archive)
+      # ═══════════════════════════════════════════════════════════════════
+      - name: "📤 Upload parts to Bale channel (Archive)"
+        if: ${{ env.CHANNEL_ID != '' && secrets.BALE_BOT_TOKEN != '' }}
+        env:
+          BALE_TOKEN: ${{ secrets.BALE_BOT_TOKEN }}
+          CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
+        run: |
+          #!/bin/bash
+          BACKUP_DIR="${{ env.BACKUP_DIR }}"
+          BALE_API_URL="https://tapi.bale.ai/bot${BALE_TOKEN}"
+          JSON_FILE="$BACKUP_DIR/bale_file_ids.json"
           
+          echo "📤 Starting upload to Bale channel..."
+          echo "{}" > "$JSON_FILE"
+          
+          # Iterate through each folder in BACKUP_DIR
+          for FOLDER_PATH in "$BACKUP_DIR"/*/ ; do
+            [ -d "$FOLDER_PATH" ] || continue
+            FOLDER_NAME=$(basename "$FOLDER_PATH")
+            echo "📁 Processing folder: $FOLDER_NAME"
+            
+            # Store file_id for each file in this folder
+            declare -A FILE_IDS
+            
+            # Upload each file in this folder
+            for FILE in "$FOLDER_PATH"/*; do
+              [ -f "$FILE" ] || continue
+              FILENAME=$(basename "$FILE")
+              echo "  📄 Uploading: $FILENAME"
+              
+              # Send document to channel
+              RESPONSE=$(curl -s -X POST "${BALE_API_URL}/sendDocument" \
+                -F "chat_id=${CHANNEL_ID}" \
+                -F "document=@${FILE}" \
+                -F "caption=📦 ${FOLDER_NAME} - ${FILENAME}")
+              
+              # Check response and extract file_id
+              if echo "$RESPONSE" | jq -e '.ok == true' > /dev/null 2>&1; then
+                FILE_ID=$(echo "$RESPONSE" | jq -r '.result.document.file_id')
+                if [ -n "$FILE_ID" ] && [ "$FILE_ID" != "null" ]; then
+                  FILE_IDS["$FILENAME"]="$FILE_ID"
+                  echo "    ✅ Uploaded, file_id: ${FILE_ID:0:20}..."
+                else
+                  echo "    ⚠️ Could not extract file_id"
+                fi
+              else
+                echo "    ❌ Upload failed: $RESPONSE"
+              fi
+              
+              # Small delay to avoid hitting rate limits
+              sleep 1
+            done
+            
+            # Save file_ids for this folder
+            if [ ${#FILE_IDS[@]} -gt 0 ]; then
+              # Build JSON object for this folder
+              FOLDER_JSON="{}"
+              for FILENAME in "${!FILE_IDS[@]}"; do
+                FOLDER_JSON=$(echo "$FOLDER_JSON" | jq --arg name "$FILENAME" --arg fid "${FILE_IDS[$FILENAME]}" '. + {($name): $fid}')
+              done
+              
+              # Merge into main JSON
+              TEMP_JSON=$(mktemp)
+              jq --arg folder "$FOLDER_NAME" --argjson data "$FOLDER_JSON" '. + {($folder): $data}' "$JSON_FILE" > "$TEMP_JSON"
+              mv "$TEMP_JSON" "$JSON_FILE"
+              echo "  ✅ Saved $FOLDER_NAME to JSON"
+            fi
+          done
+          
+          echo "✅ All files uploaded to channel. Saved file_ids to bale_file_ids.json"
+          ls -la "$JSON_FILE"
+
+      # ═══════════════════════════════════════════════════════════════════
+      # 🆕 NEW STEP 2: Prepare Bale inline buttons (to be sent via gateway.php)
+      # ═══════════════════════════════════════════════════════════════════
+      - name: "🔗 Prepare Bale inline buttons"
+        if: ${{ env.CHANNEL_ID != '' && secrets.BALE_BOT_TOKEN != '' }}
+        run: |
+          #!/bin/bash
+          BACKUP_DIR="${{ env.BACKUP_DIR }}"
+          JSON_FILE="$BACKUP_DIR/bale_file_ids.json"
+          BUTTONS_FILE="$BACKUP_DIR/bale_buttons.json"
+          
+          echo "🔗 Generating inline buttons JSON..."
+          
+          # Initialize empty array for all buttons
+          ALL_BUTTONS='{"inline_keyboard": []}'
+          
+          # Process each folder's file_ids
+          for FOLDER_NAME in $(jq -r 'keys[]' "$JSON_FILE" 2>/dev/null); do
+            BUTTON_ROW='[]'
+            FILE_COUNT=$(jq -r ".\"$FOLDER_NAME\" | length" "$JSON_FILE")
+            
+            echo "  📁 $FOLDER_NAME ($FILE_COUNT files)"
+            
+            # Create buttons for each part
+            PART_NUM=1
+            for FILENAME in $(jq -r ".\"$FOLDER_NAME\" | keys[]" "$JSON_FILE"); do
+              FILE_ID=$(jq -r ".\"$FOLDER_NAME\".\"$FILENAME\"" "$JSON_FILE")
+              
+              # Create button text (part number or original name)
+              if [[ "$FILENAME" == *.part* ]]; then
+                BUTTON_TEXT="📦 Part $PART_NUM"
+                PART_NUM=$((PART_NUM + 1))
+              else
+                BUTTON_TEXT="📁 $FILENAME"
+              fi
+              
+              # Callback data format: "file_id_ACTUAL_FILE_ID"
+              CALLBACK_DATA="file_id_${FILE_ID}"
+              
+              # Build button object
+              BUTTON=$(jq -n --arg text "$BUTTON_TEXT" --arg cbd "$CALLBACK_DATA" '[{"text": $text, "callback_data": $cbd}]')
+              
+              # Add to row (limit 2 buttons per row)
+              BUTTON_ROW=$(echo "$BUTTON_ROW" | jq --argjson btn "$BUTTON" '. + $btn')
+              if [ $(echo "$BUTTON_ROW" | jq 'length') -ge 2 ]; then
+                ALL_BUTTONS=$(echo "$ALL_BUTTONS" | jq --argjson row "$BUTTON_ROW" '.inline_keyboard += [$row]')
+                BUTTON_ROW='[]'
+              fi
+            done
+            
+            # Add remaining buttons in last row
+            if [ $(echo "$BUTTON_ROW" | jq 'length') -gt 0 ]; then
+              ALL_BUTTONS=$(echo "$ALL_BUTTONS" | jq --argjson row "$BUTTON_ROW" '.inline_keyboard += [$row]')
+            fi
+          done
+          
+          # Save buttons JSON
+          echo "$ALL_BUTTONS" | jq '.' > "$BUTTONS_FILE"
+          echo "✅ Buttons JSON saved to: $BUTTONS_FILE"
+          echo "📋 Content preview:"
+          cat "$BUTTONS_FILE" | jq '.'
+          
+          # Also save to videos folder for gateway.php access
+          cp "$BUTTONS_FILE" videos/bale_buttons_${{ github.run_id }}.json 2>/dev/null || true
+
       # ── Step 9: Push ──────────────────────────────────
       - name: "📤 Push to Repository"
         id: push
