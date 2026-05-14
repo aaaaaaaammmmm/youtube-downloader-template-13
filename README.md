@@ -95,6 +95,8 @@
 ساخته شده با ❤️ توسط **Khashayar**  
 
 [🌐 وبسایت شخصی](https://khashayar.one)
+<br>
+[🥷 چنل من داخل بله](https://ble.ir/GeminiPrompt)
 
 ---
 
