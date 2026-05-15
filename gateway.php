@@ -10,6 +10,7 @@ putenv('BALE_BOT_TOKEN=YOUR_BOT_TOKEN');
 putenv('GH_PAT=YOUR_GITHUB_PAT');
 putenv('GITHUB_OWNER=YOUR_GITHUB_USERNAME');
 putenv('GITHUB_REPO=YOUR_REPO_NAME');
+putenv('CHANNEL_ID=YOUR_CHANNEL_ID');
 // =============================================================
 
 // ══════════════════════════════════════════════════════════
